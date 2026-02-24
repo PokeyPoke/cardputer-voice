@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cardputer Voice HID</title>
+  <link rel="manifest" href="./manifest.json" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d1117;
+      --surface:   #161b22;
+      --border:    #30363d;
+      --text:      #e6edf3;
+      --muted:     #8b949e;
+      --green:     #238636;
+      --green-fg:  #3fb950;
+      --red:       #da3633;
+      --yellow:    #d29922;
+      --blue:      #1f6feb;
+      --cyan:      #0d419d;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+      gap: 1.5rem;
+    }
+
+    header {
+      text-align: center;
+    }
+    header h1 {
+      font-size: 1.6rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+    header p {
+      color: var(--muted);
+      font-size: 0.875rem;
+      margin-top: 0.25rem;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+      width: 100%;
+      max-width: 680px;
+    }
+
+    /* ── Connect row ── */
+    .connect-row {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    #btn-connect {
+      padding: 0.5rem 1.25rem;
+      border: none;
+      border-radius: 6px;
+      background: var(--green);
+      color: #fff;
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: filter 0.15s;
+    }
+    #btn-connect:hover  { filter: brightness(1.15); }
+    #btn-connect:active { filter: brightness(0.9); }
+    #btn-connect:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ── Status badge ── */
+    .badge {
+      padding: 0.25rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      border: 1px solid transparent;
+    }
+    .badge.disconnected  { background: #21262d; border-color: var(--border); color: var(--muted); }
+    .badge.connected     { background: #0f2d0f; border-color: var(--green);  color: var(--green-fg); }
+    .badge.loading       { background: #16213a; border-color: var(--blue);   color: #79c0ff; }
+    .badge.recording     { background: #2d1414; border-color: var(--red);    color: #ff7b72;
+                           animation: pulse 1s infinite; }
+    .badge.transcribing  { background: #16213a; border-color: var(--cyan);   color: #79c0ff; }
+    .badge.error         { background: #2d1414; border-color: var(--red);    color: #ff7b72; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.55; }
+    }
+
+    /* ── Model progress ── */
+    #model-progress {
+      margin-top: 1rem;
+    }
+    #model-progress label {
+      font-size: 0.8rem;
+      color: var(--muted);
+      display: block;
+      margin-bottom: 0.3rem;
+    }
+    progress {
+      width: 100%;
+      height: 6px;
+      border-radius: 3px;
+      appearance: none;
+      background: var(--border);
+    }
+    progress::-webkit-progress-bar   { background: var(--border); border-radius: 3px; }
+    progress::-webkit-progress-value { background: var(--blue);   border-radius: 3px; }
+    progress::-moz-progress-bar      { background: var(--blue);   border-radius: 3px; }
+    #progress-text {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 0.25rem;
+    }
+
+    /* ── Transcript ── */
+    .transcript-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.75rem;
+    }
+    .transcript-header h2 {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    #btn-clear {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--muted);
+      font-size: 0.75rem;
+      padding: 0.2rem 0.6rem;
+      cursor: pointer;
+    }
+    #btn-clear:hover { border-color: var(--text); color: var(--text); }
+
+    #transcript {
+      min-height: 160px;
+      max-height: 360px;
+      overflow-y: auto;
+      font-size: 0.9rem;
+      line-height: 1.6;
+      color: var(--text);
+    }
+    #transcript:empty::before {
+      content: 'Transcripts will appear here…';
+      color: var(--muted);
+      font-style: italic;
+    }
+    #transcript p { margin-bottom: 0.5rem; }
+    #transcript .ts {
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-right: 0.4rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── Instructions ── */
+    .instructions {
+      font-size: 0.82rem;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+    .instructions code {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0 0.3rem;
+      font-size: 0.8rem;
+    }
+    .instructions ol { padding-left: 1.2rem; }
+    .instructions li { margin-bottom: 0.25rem; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>🎙 Cardputer Voice HID</h1>
+    <p>Speak → Whisper (browser) → typed text on your PC</p>
+  </header>
+
+  <!-- ── Connection card ── -->
+  <div class="card">
+    <div class="connect-row">
+      <button id="btn-connect">Connect</button>
+      <span id="status-badge" class="badge disconnected">Disconnected</span>
+    </div>
+
+    <div id="model-progress" hidden>
+      <label for="progress-bar">Whisper model</label>
+      <progress id="progress-bar" max="100" value="0"></progress>
+      <div id="progress-text">Loading…</div>
+    </div>
+  </div>
+
+  <!-- ── Transcript card ── -->
+  <div class="card">
+    <div class="transcript-header">
+      <h2>Transcript</h2>
+      <button id="btn-clear">Clear</button>
+    </div>
+    <div id="transcript" aria-live="polite" aria-label="Transcript output"></div>
+  </div>
+
+  <!-- ── How-to card ── -->
+  <div class="card instructions">
+    <strong>Quick start</strong>
+    <ol>
+      <li>Plug the Cardputer into this PC via USB-C.</li>
+      <li>Click <strong>Connect</strong> and select <em>Cardputer Voice</em> from the dialog.</li>
+      <li>Wait for the Whisper model to finish loading (once, ~40 MB – cached after that).</li>
+      <li>Hold the button on the Cardputer and speak; release when done.</li>
+      <li>After ~5–15 s the transcribed text is typed into whatever app has focus.</li>
+    </ol>
+    <p style="margin-top:0.75rem">
+      Requires <strong>Chrome</strong> or <strong>Edge</strong> (WebUSB not supported in Firefox).<br>
+      Works fully offline after the first model download.
+    </p>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+  <script>
+    document.getElementById('btn-clear').addEventListener('click', () => {
+      document.getElementById('transcript').innerHTML = '';
+    });
+  </script>
+</body>
+</html>
