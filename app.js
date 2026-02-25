@@ -61,9 +61,13 @@ function initWorker() {
                 break;
 
             case 'transcript':
-                if (data.text) {
+                console.log('[worker] transcript:', JSON.stringify(data.text));
+                if (data.text && data.text.trim()) {
                     appendTranscript(data.text);
-                    await sendText(data.text + ' ');
+                    await sendText(data.text.trim() + ' ');
+                } else {
+                    // Send null terminator so firmware exits WAITING_TEXT even on empty result
+                    await sendText('');
                 }
                 if (port) setStatus('Connected – hold button to record', 'connected');
                 break;
@@ -170,7 +174,7 @@ async function receiveLoop() {
         }
 
         if (audioBytes.length < 512) {
-            // Too short to be meaningful audio
+            console.log('[serial] audio too short, skipping');
             continue;
         }
 
