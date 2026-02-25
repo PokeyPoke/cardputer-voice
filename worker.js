@@ -64,7 +64,6 @@ async function transcribe(audioData, sampleRate) {
 
     const result = await transcriber(float32, {
         sampling_rate: sampleRate || 16000,
-        language: 'english',
         task: 'transcribe',
     });
 
