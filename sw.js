@@ -1,7 +1,7 @@
 // Service Worker – caches app shell for offline use.
 // Transformers.js caches the Whisper model in IndexedDB automatically.
 
-const CACHE_NAME = 'cardputer-voice-v1';
+const CACHE_NAME = 'cardputer-voice-v3';
 const SHELL_ASSETS = [
   './',
   './index.html',
