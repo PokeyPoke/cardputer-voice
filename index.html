@@ -194,7 +194,7 @@
 
   <header>
     <h1>🎙 Cardputer Voice HID</h1>
-    <p>Speak → Whisper (browser) → typed text on your PC</p>
+    <p>Speak → Whisper (browser, offline) → typed text on your PC</p>
   </header>
 
   <!-- ── Connection card ── -->
@@ -225,13 +225,13 @@
     <strong>Quick start</strong>
     <ol>
       <li>Plug the Cardputer into this PC via USB-C.</li>
-      <li>Click <strong>Connect</strong> and select <em>Cardputer Voice</em> from the dialog.</li>
+      <li>Click <strong>Connect</strong> and select <em>Cardputer Voice</em> from the serial port dialog.</li>
       <li>Wait for the Whisper model to finish loading (once, ~40 MB – cached after that).</li>
       <li>Hold the button on the Cardputer and speak; release when done.</li>
       <li>After ~5–15 s the transcribed text is typed into whatever app has focus.</li>
     </ol>
     <p style="margin-top:0.75rem">
-      Requires <strong>Chrome</strong> or <strong>Edge</strong> (WebUSB not supported in Firefox).<br>
+      Requires <strong>Chrome</strong> or <strong>Edge</strong> (Web Serial API — not supported in Firefox).<br>
       Works fully offline after the first model download.
     </p>
   </div>

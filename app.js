@@ -1,14 +1,11 @@
-// app.js – WebUSB orchestration + Whisper worker coordination
+// app.js – Web Serial orchestration + Whisper worker coordination
 'use strict';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const USB_VENDOR_ID   = 0x303A;        // Espressif default VID
-const WEBUSB_IFACE    = 1;             // Interface 1 = WebUSB vendor class
-const CHUNK_SIZE      = 512;           // bytes per transferIn
-const SAMPLE_RATE     = 16000;         // Hz
+const SAMPLE_RATE = 16000;  // Hz — must match firmware SAMPLE_RATE
 
 // 4-byte EOF marker emitted by firmware when recording stops
-const EOF_MARKER = new Uint8Array([0xFF, 0xFE, 0xFD, 0xFC]);
+const EOF_MARKER = [0xFF, 0xFE, 0xFD, 0xFC];
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const btnConnect    = document.getElementById('btn-connect');
@@ -19,12 +16,9 @@ const progressBar   = document.getElementById('progress-bar');
 const progressText  = document.getElementById('progress-text');
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let device      = null;
-let epIn        = null;   // Bulk IN endpoint number  (device → host: audio)
-let epOut       = null;   // Bulk OUT endpoint number (host → device: text)
-let worker      = null;
-let modelReady  = false;
-let recording   = false;
+let port       = null;
+let worker     = null;
+let modelReady = false;
 
 // ── Status display ────────────────────────────────────────────────────────────
 function setStatus(text, cls) {
@@ -32,15 +26,13 @@ function setStatus(text, cls) {
     statusBadge.className   = 'badge ' + (cls || '');
 }
 
-// ── EOF marker detection ──────────────────────────────────────────────────────
-function isEOF(dataView) {
-    if (dataView.byteLength < 4) return false;
-    return (
-        dataView.getUint8(0) === 0xFF &&
-        dataView.getUint8(1) === 0xFE &&
-        dataView.getUint8(2) === 0xFD &&
-        dataView.getUint8(3) === 0xFC
-    );
+// ── EOF marker search ─────────────────────────────────────────────────────────
+function findEOF(bytes) {
+    for (let i = 0; i <= bytes.length - 4; i++) {
+        if (bytes[i]   === 0xFF && bytes[i+1] === 0xFE &&
+            bytes[i+2] === 0xFD && bytes[i+3] === 0xFC) return i;
+    }
+    return -1;
 }
 
 // ── Worker setup ──────────────────────────────────────────────────────────────
@@ -52,7 +44,7 @@ function initWorker() {
             case 'ready':
                 modelReady = true;
                 modelProgress.hidden = true;
-                setStatus('Connected – hold button to record', 'connected');
+                if (port) setStatus('Connected – hold button to record', 'connected');
                 break;
 
             case 'progress':
@@ -73,7 +65,7 @@ function initWorker() {
                     appendTranscript(data.text);
                     await sendText(data.text + ' ');
                 }
-                setStatus('Connected – hold button to record', 'connected');
+                if (port) setStatus('Connected – hold button to record', 'connected');
                 break;
 
             case 'error':
@@ -88,136 +80,99 @@ function initWorker() {
         setStatus('Worker crashed – see console', 'error');
     };
 
-    // Kick off model load
     worker.postMessage({ type: 'init' });
     setStatus('Loading model…', 'loading');
 }
 
-// ── WebUSB connection ─────────────────────────────────────────────────────────
+// ── Web Serial connection ─────────────────────────────────────────────────────
 async function connect() {
     try {
-        device = await navigator.usb.requestDevice({
-            filters: [{ vendorId: USB_VENDOR_ID }],
+        port = await navigator.serial.requestPort({
+            filters: [{ usbVendorId: 0x303A }],
         });
-        await device.open();
-        await device.selectConfiguration(1);
-        await device.claimInterface(WEBUSB_IFACE);
+        await port.open({ baudRate: 2000000 });   // baud rate ignored for USB CDC
 
-        // Discover bulk endpoints dynamically from the interface descriptor
-        const iface   = device.configuration.interfaces[WEBUSB_IFACE];
-        const alt     = iface.alternates[0];
-        const bulkIn  = alt.endpoints.find(ep => ep.direction === 'in'  && ep.type === 'bulk');
-        const bulkOut = alt.endpoints.find(ep => ep.direction === 'out' && ep.type === 'bulk');
-
-        if (!bulkIn || !bulkOut) {
-            throw new Error('Could not find bulk IN/OUT endpoints on WebUSB interface');
-        }
-
-        epIn  = bulkIn.endpointNumber;
-        epOut = bulkOut.endpointNumber;
-
-        console.log(`[usb] connected – bulk IN ep${epIn}, OUT ep${epOut}`);
-
-        // Listen for device disconnection
-        navigator.usb.addEventListener('disconnect', ({ device: d }) => {
-            if (d === device) handleDisconnect();
+        navigator.serial.addEventListener('disconnect', ({ target }) => {
+            if (target === port) handleDisconnect();
         });
 
-        btnConnect.textContent    = 'Disconnect';
-        btnConnect.onclick        = disconnect;
+        btnConnect.textContent = 'Disconnect';
+        btnConnect.onclick     = disconnect;
 
-        if (modelReady) {
-            setStatus('Connected – hold button to record', 'connected');
-        } else {
-            setStatus('Connected – loading model…', 'loading');
-        }
+        setStatus(modelReady ? 'Connected – hold button to record' : 'Connected – loading model…',
+                  modelReady ? 'connected' : 'loading');
 
-        // Start the audio receive loop in the background
         receiveLoop();
 
     } catch (err) {
-        console.error('[usb] connect failed:', err);
-        setStatus('Connection failed – ' + err.message, 'error');
+        console.error('[serial] connect failed:', err);
+        if (err.name !== 'NotFoundError') {   // user cancelled — no error message needed
+            setStatus('Connection failed – ' + err.message, 'error');
+        }
     }
 }
 
 async function disconnect() {
-    if (!device) return;
-    try {
-        await device.close();
-    } catch (_) { /* ignore */ }
+    if (!port) return;
+    const p = port;
+    port = null;
+    try { await p.close(); } catch (_) { /* ignore */ }
     handleDisconnect();
 }
 
 function handleDisconnect() {
-    device   = null;
-    epIn     = null;
-    epOut    = null;
-    recording = false;
+    port = null;
     btnConnect.textContent = 'Connect';
     btnConnect.onclick     = connect;
     setStatus('Disconnected', 'disconnected');
 }
 
 // ── Audio receive loop ────────────────────────────────────────────────────────
-// Continuously reads Bulk IN transfers.  When the firmware sends the EOF
-// marker, we hand all accumulated PCM chunks to the Whisper worker.
+// Runs for the lifetime of the connection.
+// Each iteration: accumulate audio bytes until EOF marker, then transcribe.
 async function receiveLoop() {
-    while (device) {
-        let audioChunks = [];
-        recording = false;
+    while (port && port.readable) {
+        let audioBytes = [];
+        let recordingStarted = false;
+        let reader;
 
-        // Wait for the first chunk (indicates button pressed → recording started)
         try {
-            const first = await device.transferIn(epIn, CHUNK_SIZE);
-            if (!first || !first.data) continue;
+            reader = port.readable.getReader();
 
-            if (isEOF(first.data)) continue;  // spurious EOF – ignore
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                if (!value || value.length === 0) continue;
 
-            recording = true;
-            setStatus('Recording…', 'recording');
-            audioChunks.push(new Int16Array(first.data.buffer.slice(
-                first.data.byteOffset, first.data.byteOffset + first.data.byteLength
-            )));
+                // Append incoming bytes
+                for (const b of value) audioBytes.push(b);
 
-        } catch (err) {
-            if (!device) break;
-            console.warn('[usb] transferIn error (waiting):', err);
-            await sleep(200);
-            continue;
-        }
+                // First bytes received → recording started on device
+                if (!recordingStarted && audioBytes.length > 0) {
+                    recordingStarted = true;
+                    setStatus('Recording…', 'recording');
+                }
 
-        // Drain chunks until EOF marker
-        try {
-            while (device) {
-                const result = await device.transferIn(epIn, CHUNK_SIZE);
-                if (!result || !result.data) break;
-
-                if (isEOF(result.data)) break;
-
-                audioChunks.push(new Int16Array(result.data.buffer.slice(
-                    result.data.byteOffset, result.data.byteOffset + result.data.byteLength
-                )));
+                // Check for EOF marker
+                const eofIdx = findEOF(audioBytes);
+                if (eofIdx !== -1) {
+                    audioBytes = audioBytes.slice(0, eofIdx);
+                    break;
+                }
             }
         } catch (err) {
-            if (!device) break;
-            console.warn('[usb] transferIn error (draining):', err);
+            if (!port) break;
+            console.warn('[serial] read error:', err);
+        } finally {
+            if (reader) {
+                try { reader.releaseLock(); } catch (_) { /* ignore */ }
+            }
         }
 
-        recording = false;
-
-        if (audioChunks.length === 0) continue;
-
-        // Concatenate all Int16 chunks into one flat array
-        const totalSamples = audioChunks.reduce((s, c) => s + c.length, 0);
-        const combined     = new Int16Array(totalSamples);
-        let   offset       = 0;
-        for (const chunk of audioChunks) {
-            combined.set(chunk, offset);
-            offset += chunk.length;
+        if (audioBytes.length < 512) {
+            // Too short to be meaningful audio
+            continue;
         }
-
-        console.log(`[usb] received ${totalSamples} samples (${(totalSamples / SAMPLE_RATE).toFixed(1)}s)`);
 
         if (!modelReady) {
             setStatus('Model not ready – please wait', 'loading');
@@ -226,7 +181,15 @@ async function receiveLoop() {
 
         setStatus('Transcribing…', 'transcribing');
 
-        // Send to worker for Whisper inference (transferable for zero-copy)
+        // Convert byte array (little-endian int16) → Int16Array
+        const samples = Math.floor(audioBytes.length / 2);
+        const combined = new Int16Array(samples);
+        for (let i = 0; i < samples; i++) {
+            combined[i] = (audioBytes[i * 2]) | (audioBytes[i * 2 + 1] << 8);
+        }
+
+        console.log(`[serial] received ${samples} samples (${(samples / SAMPLE_RATE).toFixed(1)}s)`);
+
         worker.postMessage(
             { type: 'transcribe', audioData: combined, sampleRate: SAMPLE_RATE },
             [combined.buffer]
@@ -234,15 +197,20 @@ async function receiveLoop() {
     }
 }
 
-// ── Send text back to device ──────────────────────────────────────────────────
+// ── Send text to device ───────────────────────────────────────────────────────
 async function sendText(text) {
-    if (!device || epOut === null) return;
+    if (!port || !port.writable) return;
+    let writer;
     try {
-        const encoded = new TextEncoder().encode(text + '\0');
-        await device.transferOut(epOut, encoded);
-        console.log('[usb] sent text:', JSON.stringify(text));
+        writer = port.writable.getWriter();
+        await writer.write(new TextEncoder().encode(text + '\0'));
+        console.log('[serial] sent text:', JSON.stringify(text));
     } catch (err) {
-        console.error('[usb] sendText failed:', err);
+        console.error('[serial] sendText failed:', err);
+    } finally {
+        if (writer) {
+            try { writer.releaseLock(); } catch (_) { /* ignore */ }
+        }
     }
 }
 
@@ -259,13 +227,10 @@ function escapeHtml(str) {
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-
 // ── Init ──────────────────────────────────────────────────────────────────────
 (function init() {
-    if (!navigator.usb) {
-        setStatus('WebUSB not supported – use Chrome or Edge', 'error');
+    if (!('serial' in navigator)) {
+        setStatus('Web Serial not supported – use Chrome or Edge', 'error');
         btnConnect.disabled = true;
         return;
     }
@@ -273,11 +238,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     btnConnect.onclick = connect;
     setStatus('Disconnected', 'disconnected');
 
-    // Register service worker for offline support
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('./sw.js').catch(console.error);
     }
 
-    // Start loading the Whisper model immediately (so it's ready before first recording)
     initWorker();
 })();
