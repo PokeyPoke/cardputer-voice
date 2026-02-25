@@ -42,18 +42,24 @@ async function transcribe(audioData, sampleRate) {
         return;
     }
 
-    // Cardputer sends int16 PCM; Whisper expects float32 in [-1, 1]
-    // Normalise to peak ~0.9 so quiet mics don't produce empty transcripts.
-    let peak = 0;
+    // Cardputer sends int16 PCM; Whisper expects float32 in [-1, 1].
+    // The SPM1423 PDM mic has a large DC offset – remove it first, then
+    // normalise the AC (speech) component to ~0.9 peak.
+    let sum = 0;
+    for (let i = 0; i < audioData.length; i++) sum += audioData[i];
+    const mean = sum / audioData.length;
+
+    let acPeak = 0;
     for (let i = 0; i < audioData.length; i++) {
-        const abs = Math.abs(audioData[i]);
-        if (abs > peak) peak = abs;
+        const v = Math.abs(audioData[i] - mean);
+        if (v > acPeak) acPeak = v;
     }
-    console.log(`[worker] audio peak: ${peak} / 32768 (${(peak/32768*100).toFixed(1)}%)`);
-    const scale = peak > 50 ? 0.9 / peak : 1.0 / 32768.0;
+    console.log(`[worker] DC offset: ${mean.toFixed(0)}, AC peak: ${acPeak.toFixed(0)} / 32768 (${(acPeak/32768*100).toFixed(1)}%)`);
+
+    const scale = acPeak > 50 ? 0.9 / acPeak : 1.0 / 32768.0;
     const float32 = new Float32Array(audioData.length);
     for (let i = 0; i < audioData.length; i++) {
-        float32[i] = audioData[i] * scale;
+        float32[i] = (audioData[i] - mean) * scale;
     }
 
     const result = await transcriber(float32, {
