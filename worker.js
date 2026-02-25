@@ -43,9 +43,17 @@ async function transcribe(audioData, sampleRate) {
     }
 
     // Cardputer sends int16 PCM; Whisper expects float32 in [-1, 1]
+    // Normalise to peak ~0.9 so quiet mics don't produce empty transcripts.
+    let peak = 0;
+    for (let i = 0; i < audioData.length; i++) {
+        const abs = Math.abs(audioData[i]);
+        if (abs > peak) peak = abs;
+    }
+    console.log(`[worker] audio peak: ${peak} / 32768 (${(peak/32768*100).toFixed(1)}%)`);
+    const scale = peak > 50 ? 0.9 / peak : 1.0 / 32768.0;
     const float32 = new Float32Array(audioData.length);
     for (let i = 0; i < audioData.length; i++) {
-        float32[i] = audioData[i] / 32768.0;
+        float32[i] = audioData[i] * scale;
     }
 
     const result = await transcriber(float32, {
