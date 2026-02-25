@@ -1,7 +1,7 @@
 // Web Worker – runs Whisper Tiny inference via Transformers.js (WebAssembly).
 // Receives Int16Array audio data, returns transcript string.
 
-import { pipeline } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2/src/transformers.js';
+import { pipeline } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
 
 // ── Model initialisation ──────────────────────────────────────────────────────
 // Loaded once; subsequent recordings reuse the same pipeline.

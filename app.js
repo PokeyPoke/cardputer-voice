@@ -76,7 +76,7 @@ function initWorker() {
     };
 
     worker.onerror = (e) => {
-        console.error('[worker error]', e);
+        console.error('[worker error]', e.message, e.filename, e.lineno, e);
         setStatus('Worker crashed – see console', 'error');
     };
 
